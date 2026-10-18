@@ -1,0 +1,10 @@
+# No panicking error handling anywhere — production OR tests. Tests return
+# Result and use `?`; the enforced crates deny unwrap/expect/panic everywhere.
+#
+# `allow-unwrap-in-tests = false` is the load-bearing line. Leaving it at its
+# default (`true`) exempts `#[test]` bodies from the lint, which is exactly the
+# exemption that lets a panic-based test suite coexist with a claim that the
+# suite has none. peregrine sets the same three flags for the same reason.
+allow-unwrap-in-tests = false
+allow-expect-in-tests = false
+allow-panic-in-tests = false

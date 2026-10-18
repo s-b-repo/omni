@@ -1,0 +1,14 @@
+/target
+target-cuda/
+**/*.rs.bk
+*.pdb
+
+# Certificates and reward caches are outputs, not sources. A committed residual
+# is a claim about code that no longer exists; `omni verify` recomputes them.
+*.rep
+*.stat
+
+# Scratch for the bench harnesses. Same convention as peregrine: curate into
+# bench-data/, never leave raw runs in the tree.
+bench-data/scratch/
+/out/

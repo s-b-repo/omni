@@ -1,0 +1,19 @@
+[package]
+name = "omni"
+description = "The `omni` binary — agent harness whose runtime is itself editable."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "omni"
+path = "src/main.rs"
+
+[dependencies]
+omni-core = { workspace = true }
+serde_json = { workspace = true }
+omni-model = { workspace = true }
+omni-model-peregrine = { workspace = true }
+omni-verify = { workspace = true }

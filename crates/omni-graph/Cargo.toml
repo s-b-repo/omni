@@ -1,0 +1,14 @@
+[package]
+name = "omni-graph"
+description = "A typed node graph with an explicit frontier and idempotent apply: the learnable substrate the loop reasons over."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omni-core = { workspace = true }
+omni-model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

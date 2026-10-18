@@ -1,0 +1,81 @@
+# omni — cargo workspace.
+#
+# An agent harness whose runtime is itself editable: hooks installed at four
+# lifecycle points, a patch protocol, a sandbox to host them, and a reward that
+# comes from rerunning a frozen agent rather than from a judge.
+#
+# Each seam is owned by an existing system and joined by a versioned contract,
+# never by shared memory:
+#   - the model        → peregrine's OpenAI-compatible /v1/chat/completions
+#   - the working set  → subnext's Dynamic Context Runtime (crate `dcr`)
+#   - the integrity    → unifur's certificate / cheat-scan / refusal discipline
+#   - the agent loop   → openhack's graph, frontier, council and ROE decisions
+#   - the edit loop    → Harness-R1's patch protocol, sandbox and rerun-delta
+#
+# In dependency order the crates are:
+#   omni-core        errors, contracts, ids, canonical json, atomic writes
+#   omni-verify      the numerical certificate suite (one of the two gates)
+#   omni-model       the Model trait and the ToolRegistry
+#   omni-model-peregrine   OpenAI-compatible client
+#   omni-model-unifur      dblocks backend (feature-gated; no code checkpoint yet)
+#   omni-ctx         the ContextPlane over canonical `dcr`
+#   omni-hook        the sandboxed hook runtime
+#   omni-graph       typed node graph, frontier, idempotent apply
+#   omni-loop        the orchestration loop, council, round budget
+#   omni-profile-pentest   ROE, scope, findings, coverage, combinations
+#   omni-eval        failure packets, rerun-delta reward, identity pinning
+#   omni             the `omni` binary
+#
+# The milestone crates are listed here only once something imports them. See
+# AGENTS.md: "do not create a crate whose job is described in a table row that
+# nothing imports yet."
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/omni-core",
+    "crates/omni-model",
+    "crates/omni-model-peregrine",
+    "crates/omni-verify",
+    "crates/omni-ctx",
+    "crates/omni-model-unifur",
+    "crates/omni-graph",
+    "crates/omni-loop",
+    "crates/omni-eval",
+    "crates/omni-hook",
+    "crates/omni",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# Deliberately below the pinned toolchain: CI compiles the whole tree at exactly
+# this version so the two cannot drift apart the way they can when they are the
+# same number. Same arrangement as unifur.
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/s-b-repo/omni"
+
+[workspace.dependencies]
+omni-core = { path = "crates/omni-core" }
+omni-model = { path = "crates/omni-model" }
+omni-model-peregrine = { path = "crates/omni-model-peregrine" }
+omni-verify = { path = "crates/omni-verify" }
+omni-ctx = { path = "crates/omni-ctx" }
+omni-model-unifur = { path = "crates/omni-model-unifur" }
+omni-graph = { path = "crates/omni-graph" }
+omni-loop = { path = "crates/omni-loop" }
+omni-eval = { path = "crates/omni-eval" }
+omni-hook = { path = "crates/omni-hook" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# Release profile tuned for the CPU matmul path (peregrine) and for the
+# interpreter that hosts harness hooks (omni-hook). `lto = "fat"` so a hook's
+# registered functions inline into the sandbox dispatch rather than paying a
+# call per script operation.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

@@ -1,0 +1,13 @@
+[package]
+name = "omni-model"
+description = "The Model trait, the message and tool vocabulary every backend implements, and pure dry-runnable tool enforcement."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omni-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

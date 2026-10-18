@@ -1,0 +1,9 @@
+# Pin the toolchain this project is built and checked with.
+#
+# Named rather than inherited so a teammate, a CI run, and a container image all
+# compile on the same compiler the code was actually verified against. 1.96 is
+# the toolchain unifur pins; sharing it means the two adjacent workspaces agree
+# on Burn, serde and thiserror builds.
+[toolchain]
+channel = "1.96"
+components = ["rustfmt", "clippy"]

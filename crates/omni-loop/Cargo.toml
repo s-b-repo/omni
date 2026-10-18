@@ -1,0 +1,17 @@
+[package]
+name = "omni-loop"
+description = "The orchestration loop: a deterministic council tally and an explicit round budget."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omni-core = { workspace = true }
+omni-eval = { workspace = true }
+omni-graph = { workspace = true }
+omni-hook = { workspace = true }
+omni-model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

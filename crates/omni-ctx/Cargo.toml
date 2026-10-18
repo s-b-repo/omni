@@ -1,0 +1,27 @@
+[package]
+name = "omni-ctx"
+description = "The ContextPlane: a working set that outlives the attention window. Speaks the deployed unifur<->subnext file channel and hosts a local DCR."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omni-core = { workspace = true }
+omni-model = { workspace = true }
+# Canonical subnext, not peregrine-ctx. Both are the same crate and both carry
+# `interop`, `sessions`, `skills` and `fit` as of 609451b; peregrine-ctx is a
+# vendored prefix-renamed copy whose sync is gated by
+# scripts/verify-cross-repo.sh, and this is the upstream of record.
+#
+# NOTE: this is a path dependency into a working tree with uncommitted changes
+# (`src/interop.rs` is untracked there). The build is therefore reproducible
+# from the tree, not from a commit. See docs/CONTRACT.md.
+#
+# Four levels up, not three: this manifest lives at `<root>/crates/omni-ctx`,
+# so `../../../..` is `/home/cortix/Downloads`. The sibling
+# `/home/cortix/Downloads/inc/subnext` is one commit behind and is NOT it.
+dcr = { path = "../../../../subnext" }
+serde = { workspace = true }
+serde_json = { workspace = true }

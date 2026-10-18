@@ -1,0 +1,14 @@
+[package]
+name = "omni-hook"
+description = "The sandboxed hook runtime: parse, validate and host harness-engineer patches at four lifecycle positions. Pure, I/O-free and deterministic, so a hook can be dry-run exactly as it will be dispatched."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omni-core = { workspace = true }
+omni-model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

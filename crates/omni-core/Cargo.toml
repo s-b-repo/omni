@@ -1,0 +1,13 @@
+[package]
+name = "omni-core"
+description = "Errors, versioned contracts, ids, canonical json and atomic writes — the vocabulary every other omni crate speaks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

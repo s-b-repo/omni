@@ -1,0 +1,24 @@
+[package]
+name = "omni-model-unifur"
+description = "The dblocks backend. Feature-gated, and honest about the absence: unifur ships no agent-capable checkpoint."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omni-core = { workspace = true }
+omni-model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+default = []
+# The `dblocks` backend needs a checkpoint. Nothing in unifur is one: the
+# in-repo `checkpoints/` are 370 KB-1 MB geometric experiments, `quality_coder/`
+# is explicitly model-free, and `/srv/m-sda/unifur/models/` holds routing
+# classifiers that do not generate. See docs/CONTRACT.md "What is not true yet".
+# The feature is off by default so the default build reports the absence rather
+# than loading a geometry model and calling it an agent.
+dblocks = []

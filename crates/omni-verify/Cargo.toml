@@ -1,0 +1,34 @@
+[package]
+name = "omni-verify"
+description = "The numerical certificate suite — omni's falsifiability gate, alongside scripts/audit-bad-patterns.sh."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "omni_verify"
+path = "src/lib.rs"
+
+[[bin]]
+name = "omni-verify"
+path = "src/main.rs"
+
+[dependencies]
+omni-core = { workspace = true }
+omni-model = { workspace = true }
+omni-model-peregrine = { workspace = true }
+# For `ChannelRequest` / `ChannelResponse`, the two deployed file-channel
+# envelopes. They live in `omni-ctx`, so the `contract` group's gated rows for
+# them name real types and run real gates rather than a structural stand-in.
+# Adding it here rather than re-declaring the structs is the whole point:
+# a forked envelope would be correct today and silently incompatible after the
+# next bump (docs/CONTRACT.md). No cycle: `omni-ctx` depends on omni-core,
+# omni-model, serde, serde_json and `dcr`, and `dcr` has no dependencies at all.
+omni-ctx = { workspace = true }
+# The `eval` group pins rule 8 — pairing by content-derived identity, an
+# invalid patch as zero, an environment failure as a named missing evaluation —
+# against the actual reward machinery rather than a re-declared copy of it.
+omni-eval = { workspace = true }
+serde_json = { workspace = true }
