@@ -19,9 +19,12 @@ omni-model = { workspace = true }
 # (`src/interop.rs` is untracked there). The build is therefore reproducible
 # from the tree, not from a commit. See docs/CONTRACT.md.
 #
-# Four levels up, not three: this manifest lives at `<root>/crates/omni-ctx`,
-# so `../../../..` is `/home/cortix/Downloads`. The sibling
-# `/home/cortix/Downloads/inc/subnext` is one commit behind and is NOT it.
-dcr = { path = "../../../../subnext" }
+# Three levels up on this machine: the manifest is at `<omni>/crates/omni-ctx`
+# and omni sits beside subnext as `/home/kali/Music/cybersec ai/{omni,subnext}`,
+# so `../../..` is `/home/kali/Music/cybersec ai`. On the cortix workstation
+# the layout was `/home/cortix/Downloads/{omni,subnext}` and `../../../..`
+# landed in `/home/cortix/Downloads`; the two layouts share "subnext is the
+# parent of omni's parent", so the path adjusts to the depth of that parent.
+dcr = { path = "../../../subnext" }
 serde = { workspace = true }
 serde_json = { workspace = true }
