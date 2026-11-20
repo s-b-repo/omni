@@ -13,10 +13,11 @@
 //! first bug report is "it said something odd" — and the request is where the
 //! bug will be.
 
+use std::io::Write as _;
 use std::process::ExitCode;
 
 use omni_model::{ChatRequest, Message, Model as _};
-use omni_model_peregrine::{Config, Peregrine, WireRequest, build_request, wire};
+use omni_model_peregrine::{Config, Peregrine, StreamChunk, WireRequest, build_request, wire};
 
 use crate::cli::Usage;
 
@@ -67,6 +68,16 @@ fn parse_flags(args: &[String]) -> Result<Flags, Usage> {
                 f.complete = true;
                 i += 1;
             }
+            "--stream" => {
+                // Swap the blocking --complete path for a streaming consumer.
+                // Implies --complete: `--stream` without a real round trip is
+                // a flag with no observable effect, which is the kind of
+                // silent configuration that teaches a caller the wrong
+                // vocabulary.
+                f.stream = true;
+                f.complete = true;
+                i += 1;
+            }
             other => return Err(Usage::new(format!("unknown option {other:?}"))),
         }
     }
@@ -79,6 +90,7 @@ struct Flags {
     key: Option<String>,
     model: Option<String>,
     complete: bool,
+    stream: bool,
     max_tokens: Option<usize>,
 }
 
@@ -147,8 +159,17 @@ fn peregrine(args: &[String]) -> Result<ExitCode, Usage> {
     // transport, the status classification and the reply parser together, and it
     // is what a gate for the model seam actually means.
     println!();
-    println!("sending...");
-    match client.chat(&req) {
+    if flags.stream {
+        println!("streaming...");
+        stream_turn(&mut client, &req)
+    } else {
+        println!("sending...");
+        blocking_turn(&mut client, &req)
+    }
+}
+
+fn blocking_turn(client: &mut Peregrine, req: &ChatRequest<'_>) -> Result<ExitCode, Usage> {
+    match client.chat(req) {
         Ok(reply) => {
             println!("finish_reason: {}", reply.finish_reason.as_str());
             println!("reply: {}", truncate(reply.text().unwrap_or("(no text)"), 400));
@@ -159,6 +180,120 @@ fn peregrine(args: &[String]) -> Result<ExitCode, Usage> {
         }
         Err(e) => {
             println!("call failed: {e}");
+            println!("retryable: {}", e.retryable());
+            Ok(ExitCode::FAILURE)
+        }
+    }
+}
+
+/// Drive `Peregrine::stream` and print each delta as it arrives.
+///
+/// The point: `ChatStream` is already certified end-to-end on fixtures, but
+/// nothing in the omni binary consumed it; the twenty-seven peregrine
+/// certificates proved the dialect, not that the code *using* the dialect
+/// worked. This closes that half.
+///
+/// The output shape:
+///   - one line `streaming...` already printed by the caller
+///   - inline printing of each `StreamChunk::Text` as it arrives (no newline
+///     between fragments; the model's own `\n`s come through unaltered)
+///   - a trailing summary `finish_reason: …` and any usage, drawn from the
+///     accumulator after the iterator exhausts
+///
+/// The peregrine dialect does NOT send `usage` on a stream (docs/CONTRACT.md:
+/// "`usage` exists only in the non-streaming body"), so a `None` is the
+/// expected value there and is reported as such rather than fabricated from
+/// character counts.
+fn stream_turn(client: &mut Peregrine, req: &ChatRequest<'_>) -> Result<ExitCode, Usage> {
+    let mut stream = match client.stream(req) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("stream open failed: {e}");
+            println!("retryable: {}", e.retryable());
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    println!("---");
+    let mut saw_text = false;
+    let mut saw_finish = false;
+    let mut had_error = false;
+    let stdout = std::io::stdout();
+    for chunk in stream.by_ref() {
+        match chunk {
+            Ok(StreamChunk::Text(text)) => {
+                saw_text = true;
+                print!("{text}");
+                // Best-effort flush so the stream reads as a stream, not as
+                // a blob printed at the end. A failed flush does not change
+                // the correctness of the loop; it is reported through
+                // `note_advisory` so the audit's "nothing is swallowed"
+                // rule is satisfied.
+                if let Err(e) = stdout.lock().flush() {
+                    omni_core::note_advisory("flushing stdout mid-stream", &e.into());
+                }
+            }
+            Ok(StreamChunk::Finish(f)) => {
+                saw_finish = true;
+                if saw_text {
+                    println!();
+                }
+                println!("---");
+                println!("finish_reason: {}", f.as_str());
+            }
+            Ok(StreamChunk::ServerError(msg)) => {
+                had_error = true;
+                if saw_text {
+                    println!();
+                }
+                println!("server-error: {msg}");
+            }
+            Ok(StreamChunk::Role(_) | StreamChunk::Done | StreamChunk::Reasoning(_)
+                | StreamChunk::ToolCall(_)) => {
+                // Role is the opening marker, Done is the sentinel, Reasoning
+                // is the model's scratchpad (deliberately not printed as the
+                // answer — rule 10 again: scoring scratchpad as answer would
+                // be scoring the model's notes). ToolCall deltas are not
+                // exercised against a text-only shim like mesh-shim.
+            }
+            Err(e) => {
+                had_error = true;
+                if saw_text {
+                    println!();
+                }
+                println!("stream chunk failed: {e}");
+                println!("retryable: {}", e.retryable());
+            }
+        }
+    }
+
+    // Finalise the aggregate. `collect` after exhaustion is cheap — it just
+    // calls the accumulator's `finish` — and is the one place that checks
+    // the stream ended as a *finished* turn rather than a cut-off one.
+    match stream.collect() {
+        Ok(reply) => {
+            if !saw_finish {
+                // The dialect may deliver the finish reason only in the
+                // accumulator's view when the frames were sparse.
+                println!("finish_reason: {}", reply.finish_reason.as_str());
+            }
+            match reply.usage {
+                Some(u) => println!(
+                    "usage: {} prompt + {} completion = {}",
+                    u.prompt_tokens,
+                    u.completion_tokens,
+                    u.total(),
+                ),
+                None => println!("usage: (not reported — peregrine streams carry no usage)"),
+            }
+            if had_error {
+                Ok(ExitCode::FAILURE)
+            } else {
+                Ok(ExitCode::SUCCESS)
+            }
+        }
+        Err(e) => {
+            println!("stream finish check failed: {e}");
             println!("retryable: {}", e.retryable());
             Ok(ExitCode::FAILURE)
         }

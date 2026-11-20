@@ -68,9 +68,12 @@ SUBCOMMANDS
     verify [--group <NAME>]        run the certificate suite; non-zero on failure
     list                           list the certificate groups
     contract                       print the cross-process contracts this build speaks
-    model peregrine [--url U] [--key K]
+    model peregrine [--url U] [--key K] [--complete] [--stream]
                                    show the exact request this build would send,
-                                   then try /health on the server
+                                   then try /health on the server. --complete
+                                   makes the call; --stream makes it as a
+                                   streaming call (implies --complete) and
+                                   prints deltas as they arrive.
     model dialects                 print where peregrine differs from OpenAI
     help                           this text
 
