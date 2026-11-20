@@ -227,58 +227,85 @@ unmatched one — it looks paired.
 
 ## What is not true yet
 
-Stated plainly because rule 10 requires it:
+Stated plainly because rule 10 requires it. Items **crossed off** have had
+their absence named and the absence removed; they stay listed with what is
+true now, because moving them silently out of the list would make a reader
+of a cached copy think they were never claimed.
 
-- **No peregrine server has been exercised.** No `peregrine-serve` is running on
-  this machine, so the twenty-seven `peregrine` certificates and the client tests
-  prove the dialect and the transport, not peregrine's behaviour. The transport
-  was proven end to end against **ollama on :11434**, which is OpenAI-compatible
-  but *not* peregrine — so "it works against a compatible server" is a weaker
-  claim than "it works against peregrine", and it is the weaker claim that is
-  true. The streaming reader is in the same position: its fixtures are
-  transcribed from `peregrine-serve`'s source and nothing has been read off a
-  live stream.
-- **The event stream is read, not consumed.** `Peregrine::stream` exists and is
-  certified, but no loop uses it yet and `omni model peregrine --complete` still
-  takes the blocking path, so streaming is a tested capability rather than an
-  exercised one.
-- **No live integration test runs in CI.** `omni model peregrine --complete` is
-  the gate; it needs a server and reports its absence rather than skipping.
-- **There is no harness engineer model.** `HookPacket` exists and is tested; the
-  thing that reads one and emits a patch does not. Every current patch is
-  hand-authored or hand-seeded.
+- **No peregrine server has been exercised.** Still true for
+  `peregrine-serve`; the twenty-seven `peregrine` certificates and the
+  client tests prove the dialect and the transport, not peregrine's
+  behaviour. ~~The transport was proven end to end against ollama on
+  :11434~~ — it has now **also** been proven against the sibling
+  `mesh-shim` (Python stdlib, shells out to `dblocks`): see
+  `scripts/verify-live-mesh.sh`, which boots the shim, drives
+  `omni model peregrine --complete` at it, and asserts four markers the
+  live run must produce. "It works against a compatible server" is still
+  the weaker claim; the stronger "it works against peregrine" waits on
+  peregrine-serve actually running on this machine.
+- ~~**The event stream is read, not consumed.**~~ **Closed.**
+  `omni model peregrine --stream` wires `Peregrine::stream` end-to-end:
+  manual iteration, delta-at-a-time stdout, server-error and
+  finish-reason chunks reported, `collect()` called after exhaustion for
+  the matched usage. A streaming request to the current shim returns
+  `HTTP 400 stream_unsupported`, which the client classifies into
+  `Error::Format` and `retryable: false` — the correct "server declined"
+  report, not a bug. A real stream-capable backend hits the same code
+  path through the other branch.
+- ~~**No live integration test runs in CI.**~~ **Closed.**
+  `scripts/verify-live-mesh.sh` is that live gate: one command, non-zero
+  on failure, four grep-reducible markers, tears down its own subprocess
+  and tempdir. Not yet added to AGENTS.md's standing gate list — a
+  review conversation, not a bookkeeping one.
+- **There is no harness engineer model.** `HookPacket` exists and is
+  tested; the thing that reads one and emits a patch does not. Every
+  current patch is hand-authored or hand-seeded.
 - **The hooks are built; nothing hosts them yet.** `omni-hook` exists: a
-  harness-engineer patch is a declarative rule set (not model-written code —
-  the interpreter design that would have needed `unsafe` was removed), parsed,
-  validated against budgets at install, and hosted at the four lifecycle
-  positions (`on_init`, `make_pre_hint`, `on_before_action`, `on_post_step`)
-  I/O-free and deterministically. `on_before_action` implements
-  `omni_model::Gate` pure, so a dry-run verdict is the dispatch verdict. What
-  is still not true: no harness-engineer model exists (every current patch is
-  hand-authored), and the rollout that feeds rewards is scripted
-  (`omni-loop::rollout`) — demonstration-grade, not evidence-grade. What IS
-  true: **one reward has been computed through the full loop** — baseline
-  rollout, failure packet, hand-authored patch, sandbox, rerun,
-  identity-paired delta (`omni-loop::rollout::evaluate_patch`, five tests:
-  gate-a-trap prices positive, invalid patch prices zero, abort prices the
-  cheaper failure, identity pairing is an exact-zero control).
-- **`omni-model-unifur` will not work.** unifur's shipped checkpoints are
-  370 KB–1 MB geometry experiments and `quality_coder/` is explicitly "no model
-  loaded, no training". The seam will be feature-gated and will report the
-  absence with the reason rather than loading a geometry model and calling it an
-  agent.
-- **The subnext responder is uncommitted** in `/home/cortix/Downloads/subnext`
-  (`?? src/interop.rs`). omni links `dcr` at a revision; if that file is not yet
-  in the canonical tree, the channel has no server and every `ContextQuery`
-  times out.
-- **The graph and the loop shape records, nothing records yet.** `omni-graph`
-  and `omni-loop` exist with certified unit semantics, but no runtime writes a
-  graph file or runs a council — the only callers are their own tests.
-- **No reward has been computed.** `omni-eval` exists and its rule-8 semantics
-  are certified (pairing by identity, invalid patch = zero, environment
-  failure = named missing evaluation, three `eval` certificates), but no
-  baseline/patch batches have been produced by real runs, so there is no `Δ`
-  to report — and the `omni` binary has no command that would compute one.
+  harness-engineer patch is a declarative rule set (not model-written
+  code — the interpreter design that would have needed `unsafe` was
+  removed), parsed, validated against budgets at install, and hosted at
+  the four lifecycle positions (`on_init`, `make_pre_hint`,
+  `on_before_action`, `on_post_step`) I/O-free and deterministically.
+  `on_before_action` implements `omni_model::Gate` pure, so a dry-run
+  verdict is the dispatch verdict. Still not true: no harness-engineer
+  model exists (every current patch is hand-authored), and the rollout
+  that feeds rewards is scripted (`omni-loop::rollout`) —
+  demonstration-grade, not evidence-grade. True now:
+  **rewards are being computed and written to disk** —
+  `omni rollout --out <path>` runs the demo baseline, evaluates a patch
+  (built-in or `--patch-file`), and writes a versioned
+  `RolloutRecord` JSON via `omni_core::write_atomic` (five tests:
+  round-trip, missing-version refused, wrong-version refused,
+  non-object-top-level refused, refused-patch still records).
+- ~~**`omni-model-unifur` will not work.**~~ **Partially closed.**
+  Code side: with `--features dblocks`, `Dblocks` implements
+  `omni_model::Model` by shelling out to a built `dblocks lm generate`
+  binary; 10 unit tests pass (render_prompt, fence parser, argv
+  pinning, deterministic-at-zero tracking, missing-binary and
+  missing-checkpoint refusals). CLI side: `omni model unifur` mirrors
+  `omni model peregrine`'s show-request → probe → `--complete` shape.
+  Still not true: unifur ships no agent-capable checkpoint of its own.
+  The toy at `nina-data/tiny-model/lm-12f979ad92611014.mpk` works for
+  smoke-testing the transport but produces noise — exactly what an
+  8-step training run produces. The `nina chat` backend variant
+  (routing in the loop) waits on a local registry.
+- **The subnext responder is uncommitted** in
+  `/home/cortix/Downloads/subnext` (`?? src/interop.rs`). omni links
+  `dcr` at a revision; if that file is not yet in the canonical tree,
+  the channel has no server and every `ContextQuery` times out.
+- **The graph and the loop shape records, nothing records yet.** —
+  **Loop half closed.** `omni-loop::RolloutRecord` serializes a
+  `PatchVerdict` with the baseline `Batch`, `Reward`, `patched` `Batch`
+  and episode summaries under `version: 1`; written atomically; read
+  refuses any `version` that is not this build's (including missing).
+  **Graph half still open.** `omni-graph::Graph` has no serializer and
+  no file writer yet; a frontier run does not leave a trace on disk.
+- ~~**No reward has been computed.**~~ **Closed.**
+  `omni rollout` computes a reward on every invocation and writes it
+  into the record (`matched`, `delta`, `skipped_for_env`,
+  `unpaired_baseline`, `unpaired_patched`). The demo delta is a stable
+  `+1.0` because the built-in patch closes the trap on both demo tasks
+  (`reward: matched=2 delta=1.0000` on every run).
 
 ## Research-backed improvements
 
