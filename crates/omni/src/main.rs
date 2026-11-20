@@ -10,6 +10,7 @@
 
 mod cli;
 mod model;
+mod rollout;
 
 use std::process::ExitCode;
 

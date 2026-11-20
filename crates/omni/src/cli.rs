@@ -42,6 +42,7 @@ pub fn dispatch(args: &[String]) -> Result<ExitCode, Error> {
         "list" => cmd_list(),
         "contract" => cmd_contract(),
         "model" => model::dispatch(&args[1..]).map_err(|u| Error::Format(u.0)),
+        "rollout" => crate::rollout::dispatch(&args[1..]).map_err(|u| Error::Format(u.0)),
         "help" | "--help" | "-h" => {
             print_usage();
             Ok(ExitCode::SUCCESS)
@@ -81,6 +82,13 @@ SUBCOMMANDS
                                    Mirrors the peregrine entry: show argv,
                                    probe the preconditions, only call on --complete.
     model dialects                 print where peregrine differs from OpenAI
+    rollout --out <path> [--patch-file P | --patch-stdin]
+                                   run the built-in demo baseline + a patch,
+                                   write a versioned RolloutRecord JSON to
+                                   <path>. With no --patch-file / --patch-stdin
+                                   a built-in demo patch that closes the trap
+                                   is used (which is the shape a
+                                   harness-engineer model will one day write).
     help                           this text
 
 GATES

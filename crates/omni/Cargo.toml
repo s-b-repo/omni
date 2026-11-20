@@ -18,6 +18,8 @@ omni-model = { workspace = true }
 omni-model-peregrine = { workspace = true }
 omni-model-unifur = { workspace = true, optional = true }
 omni-verify = { workspace = true }
+omni-loop = { workspace = true }
+omni-eval = { workspace = true }
 
 [features]
 # The `dblocks` backend — a Model impl that shells out to a built `dblocks`

@@ -31,7 +31,10 @@ use omni_graph::{ActionNode, Graph};
 use omni_model::{Gate, GateKind};
 use serde::{Deserialize, Serialize};
 
+pub mod record;
 pub mod rollout;
+
+pub use record::{EpisodeSummary, ROLLOUT_RECORD_VERSION, RolloutRecord};
 
 // ── The council ─────────────────────────────────────────────────────────────
 
