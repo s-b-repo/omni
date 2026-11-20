@@ -293,13 +293,22 @@ of a cached copy think they were never claimed.
   `/home/cortix/Downloads/subnext` (`?? src/interop.rs`). omni links
   `dcr` at a revision; if that file is not yet in the canonical tree,
   the channel has no server and every `ContextQuery` times out.
-- **The graph and the loop shape records, nothing records yet.** —
-  **Loop half closed.** `omni-loop::RolloutRecord` serializes a
-  `PatchVerdict` with the baseline `Batch`, `Reward`, `patched` `Batch`
-  and episode summaries under `version: 1`; written atomically; read
-  refuses any `version` that is not this build's (including missing).
-  **Graph half still open.** `omni-graph::Graph` has no serializer and
-  no file writer yet; a frontier run does not leave a trace on disk.
+- ~~**The graph and the loop shape records, nothing records yet.**~~
+  **Closed.**
+  Loop half: `omni-loop::RolloutRecord` serializes a `PatchVerdict`
+  with the baseline `Batch`, `Reward`, `patched` `Batch` and episode
+  summaries under `version: 1`; written atomically; read refuses any
+  `version` that is not this build's (including missing).
+  Graph half: `omni-graph::GraphSnapshot` mirrors the same discipline
+  for the typed node graph — version-gated read, mirror counts for
+  `node_count`/`edge_count`/`last_round` that are checked against the
+  embedded graph body (so a silent `BTreeMap` truncation on replay is
+  caught at read time, not hours later as a drift). `omni rollout
+  --graph-out <path>` writes an 8-node / 6-edge snapshot (2 assets, 6
+  actions, Requires edges) built from the patched episodes.
+  What is *still* not true: the graph writer parses transcripts
+  post-hoc rather than observing hook calls directly. A richer writer
+  is the obvious follow-up.
 - ~~**No reward has been computed.**~~ **Closed.**
   `omni rollout` computes a reward on every invocation and writes it
   into the record (`matched`, `delta`, `skipped_for_env`,
