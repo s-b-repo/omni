@@ -413,6 +413,8 @@ dependencies = [
  "omni-core",
  "omni-ctx",
  "omni-eval",
+ "omni-graph",
+ "omni-loop",
  "omni-model",
  "omni-model-peregrine",
  "serde_json",

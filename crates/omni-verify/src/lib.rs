@@ -54,6 +54,7 @@ pub mod canonical;
 pub mod contract;
 pub mod eval;
 pub mod peregrine;
+pub mod records;
 
 use std::fmt;
 
@@ -157,7 +158,14 @@ impl Report {
 }
 
 /// The certificate groups, in the order `list` reports them.
-pub const GROUPS: &[&str] = &["contract", "canonical", "atomic", "peregrine", "eval"];
+pub const GROUPS: &[&str] = &[
+    "contract",
+    "canonical",
+    "atomic",
+    "peregrine",
+    "eval",
+    "records",
+];
 
 /// Run one group.
 ///
@@ -172,6 +180,7 @@ pub fn run_group(group: &str) -> Result<Report, String> {
         "atomic" => report.certificates.extend(atomic::run()),
         "peregrine" => report.certificates.extend(peregrine::run()),
         "eval" => report.certificates.extend(eval::run()),
+        "records" => report.certificates.extend(records::run()),
         other => {
             return Err(format!(
                 "unknown certificate group {other:?}; known groups are {GROUPS:?}"

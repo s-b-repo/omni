@@ -31,4 +31,11 @@ omni-ctx = { workspace = true }
 # invalid patch as zero, an environment failure as a named missing evaluation —
 # against the actual reward machinery rather than a re-declared copy of it.
 omni-eval = { workspace = true }
+# The `records` group pins the on-disk round-trip property of
+# `RolloutRecord` and `GraphSnapshot` directly against the shipping types,
+# not a re-declared copy. These two record types are read by anything that
+# resumes a rollout or replays a frontier run, so a silent shape drift is
+# the exact failure mode the gate is for.
+omni-loop = { workspace = true }
+omni-graph = { workspace = true }
 serde_json = { workspace = true }
