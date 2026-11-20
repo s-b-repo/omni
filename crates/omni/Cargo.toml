@@ -16,4 +16,13 @@ omni-core = { workspace = true }
 serde_json = { workspace = true }
 omni-model = { workspace = true }
 omni-model-peregrine = { workspace = true }
+omni-model-unifur = { workspace = true, optional = true }
 omni-verify = { workspace = true }
+
+[features]
+# The `dblocks` backend — a Model impl that shells out to a built `dblocks`
+# binary. Off by default so the default build still compiles without unifur
+# in the picture. Flip it with `cargo build --features dblocks` or
+# `cargo run --features dblocks -- model unifur …`.
+default = []
+dblocks = ["dep:omni-model-unifur", "omni-model-unifur/dblocks"]

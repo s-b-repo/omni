@@ -74,6 +74,12 @@ SUBCOMMANDS
                                    makes the call; --stream makes it as a
                                    streaming call (implies --complete) and
                                    prints deltas as they arrive.
+    model unifur --binary P --checkpoint P [--complete] [--prompt S] [--max-tokens N]
+                                   smoke-test the dblocks-backed Model impl
+                                   (feature-gated on `dblocks`; without the
+                                   feature the subcommand reports the absence).
+                                   Mirrors the peregrine entry: show argv,
+                                   probe the preconditions, only call on --complete.
     model dialects                 print where peregrine differs from OpenAI
     help                           this text
 

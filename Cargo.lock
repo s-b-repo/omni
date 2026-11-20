@@ -306,6 +306,7 @@ dependencies = [
  "omni-core",
  "omni-model",
  "omni-model-peregrine",
+ "omni-model-unifur",
  "omni-verify",
  "serde_json",
 ]

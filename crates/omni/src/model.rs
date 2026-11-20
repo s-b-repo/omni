@@ -23,14 +23,183 @@ use crate::cli::Usage;
 
 pub fn dispatch(args: &[String]) -> Result<ExitCode, Usage> {
     let Some(sub) = args.first() else {
-        return Err(Usage::new("model needs a subcommand: peregrine | dialects"));
+        return Err(Usage::new(
+            "model needs a subcommand: peregrine | unifur | dialects",
+        ));
     };
     let rest = &args[1..];
     match sub.as_str() {
         "peregrine" => peregrine(rest),
+        "unifur" => unifur(rest),
         "dialects" => dialects(),
         other => Err(Usage::new(format!("unknown `omni model` subcommand {other:?}"))),
     }
+}
+
+/// `omni model unifur` — smoke-test the dblocks-backed `Model` impl.
+///
+/// Mirrors the peregrine entry point's shape: show what the call looks like,
+/// probe the preconditions (binary exists, checkpoint exists), and — only
+/// when `--complete` is passed — actually run `Model::chat` through the
+/// `Dblocks` backend. The separation keeps the usual "the request looks
+/// right" and "the server answered" findings distinct, exactly as the
+/// peregrine path does; conflating them is how a missing binary gets
+/// debugged as a malformed prompt.
+///
+/// Compiled in only under `--features dblocks`; without the feature the
+/// subcommand reports its own absence and the reason, per AGENTS.md rule 10.
+#[cfg(not(feature = "dblocks"))]
+fn unifur(_args: &[String]) -> Result<ExitCode, Usage> {
+    // A leading underscore marks "deliberately unused" to the compiler and
+    // to a reader, without the `let _ = ...` discard idiom that the audit's
+    // section B counts as a swallowed value.
+    println!(
+        "unifur backend not compiled in. Rebuild with `cargo build \
+         --features dblocks` (or `cargo run --features dblocks -- model \
+         unifur ...`). AGENTS.md rule 10: a capability that does not exist \
+         is reported as absent, with the reason."
+    );
+    Ok(ExitCode::FAILURE)
+}
+
+#[cfg(feature = "dblocks")]
+fn unifur(args: &[String]) -> Result<ExitCode, Usage> {
+    unifur_impl(args)
+}
+
+#[cfg(feature = "dblocks")]
+fn unifur_impl(args: &[String]) -> Result<ExitCode, Usage> {
+    use omni_model_unifur::Dblocks;
+
+    let flags = parse_unifur_flags(args)?;
+    let binary = flags
+        .binary
+        .ok_or_else(|| Usage::new("--binary <path> is required (the compiled dblocks CLI)"))?;
+    let checkpoint = flags
+        .checkpoint
+        .ok_or_else(|| Usage::new("--checkpoint <path> is required (a .mpk lm-generate checkpoint)"))?;
+    let max_tokens = flags.max_tokens.unwrap_or(16);
+    let prompt = flags
+        .prompt
+        .unwrap_or_else(|| "Reply with exactly: ok".to_string());
+
+    println!("would invoke {binary} lm generate");
+    println!("  --checkpoint {checkpoint}");
+    println!("  --prompt     {prompt:?}");
+    println!("  --max-new    {max_tokens}");
+    println!("  --cached");
+    println!("  --sampling   greedy");
+    println!();
+
+    // Construction probes both the binary and the checkpoint up front —
+    // the same "report the absence, do not disguise it as a per-call 500"
+    // discipline the peregrine smoke test uses for /health.
+    let mut backend = match Dblocks::new(&binary, &checkpoint) {
+        Ok(b) => b,
+        Err(e) => {
+            println!("preflight: {e}");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+    println!("preflight: ok (binary and checkpoint exist and are readable)");
+
+    if !flags.complete {
+        println!();
+        println!("not sending. Pass --complete to make a real call.");
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    println!();
+    println!("sending...");
+    let history = vec![Message::user(prompt.clone())];
+    let req = ChatRequest::new(&history).with_max_tokens(max_tokens);
+    match backend.chat(&req) {
+        Ok(reply) => {
+            println!("finish_reason: {}", reply.finish_reason.as_str());
+            println!(
+                "reply: {}",
+                truncate(reply.text().unwrap_or("(no text)"), 400)
+            );
+            match reply.usage {
+                Some(u) => println!(
+                    "usage: {} prompt + {} completion = {}",
+                    u.prompt_tokens,
+                    u.completion_tokens,
+                    u.total(),
+                ),
+                None => println!(
+                    "usage: (not reported — dblocks does not emit counts over stdout)"
+                ),
+            }
+            println!("deterministic_at_zero: {}", backend.deterministic_at_zero());
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            println!("call failed: {e}");
+            println!("retryable: {}", e.retryable());
+            Ok(ExitCode::FAILURE)
+        }
+    }
+}
+
+#[cfg(feature = "dblocks")]
+#[derive(Default)]
+struct UnifurFlags {
+    binary: Option<String>,
+    checkpoint: Option<String>,
+    prompt: Option<String>,
+    complete: bool,
+    max_tokens: Option<usize>,
+}
+
+#[cfg(feature = "dblocks")]
+fn parse_unifur_flags(args: &[String]) -> Result<UnifurFlags, Usage> {
+    let mut f = UnifurFlags::default();
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--binary" => {
+                f.binary = Some(
+                    args.get(i + 1)
+                        .ok_or_else(|| Usage::new("--binary needs a value"))?
+                        .clone(),
+                );
+                i += 2;
+            }
+            "--checkpoint" => {
+                f.checkpoint = Some(
+                    args.get(i + 1)
+                        .ok_or_else(|| Usage::new("--checkpoint needs a value"))?
+                        .clone(),
+                );
+                i += 2;
+            }
+            "--prompt" => {
+                f.prompt = Some(
+                    args.get(i + 1)
+                        .ok_or_else(|| Usage::new("--prompt needs a value"))?
+                        .clone(),
+                );
+                i += 2;
+            }
+            "--max-tokens" => {
+                let v = args
+                    .get(i + 1)
+                    .ok_or_else(|| Usage::new("--max-tokens needs a value"))?;
+                f.max_tokens = Some(
+                    v.parse::<usize>()
+                        .map_err(|_| Usage::new(format!("--max-tokens {v:?} is not a number")))?,
+                );
+                i += 2;
+            }
+            "--complete" => {
+                f.complete = true;
+                i += 1;
+            }
+            other => return Err(Usage::new(format!("unknown option {other:?}"))),
+        }
+    }
+    Ok(f)
 }
 
 fn parse_flags(args: &[String]) -> Result<Flags, Usage> {
