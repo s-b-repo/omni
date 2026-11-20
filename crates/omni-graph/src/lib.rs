@@ -26,6 +26,10 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![forbid(unsafe_code)]
 
+pub mod snapshot;
+
+pub use snapshot::{GRAPH_SNAPSHOT_VERSION, GraphSnapshot};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use omni_core::{Error, canonicalize, content_id_str};

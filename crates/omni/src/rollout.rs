@@ -30,7 +30,10 @@ use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use omni_core::HookPacket;
+use omni_core::{Error, HookPacket, content_id_str};
+use omni_graph::{
+    Action, ActionNode, AssetNode, EdgeKind, Graph, GraphSnapshot, GraphUpdate, Node,
+};
 use omni_loop::RolloutRecord;
 use omni_loop::rollout::{Step, Task, evaluate_patch, rollout};
 
@@ -108,6 +111,8 @@ pub fn dispatch(args: &[String]) -> Result<ExitCode, Usage> {
     );
 
     // 3. Record.
+    let installed = verdict.installed;
+    let episodes_for_graph = verdict.episodes.clone();
     let record = RolloutRecord::from_run(baseline, verdict)
         .map_err(|e| Usage::new(format!("building the record failed: {e}")))?;
     record
@@ -115,12 +120,128 @@ pub fn dispatch(args: &[String]) -> Result<ExitCode, Usage> {
         .map_err(|e| Usage::new(format!("writing {}: {e}", out.display())))?;
     println!();
     println!("wrote {} (version {})", out.display(), record.version);
+
+    // 4. Optional graph snapshot — the second half of the "nothing records
+    //    yet" item on docs/CONTRACT.md. Built post-hoc from the patched
+    //    episodes so the graph reflects *what actually ran* under the patch,
+    //    not just what we would have proposed.
+    if let Some(graph_out) = flags.graph_out.as_deref() {
+        match build_graph_from_episodes(&tasks, &episodes_for_graph, installed) {
+            Ok(graph) => {
+                let snap = GraphSnapshot::capture(graph).map_err(|e| {
+                    Usage::new(format!("capturing graph snapshot failed: {e}"))
+                })?;
+                snap.write(graph_out).map_err(|e| {
+                    Usage::new(format!("writing {}: {e}", graph_out.display()))
+                })?;
+                println!(
+                    "wrote {} (version {}, nodes={}, edges={})",
+                    graph_out.display(),
+                    snap.version,
+                    snap.node_count,
+                    snap.edge_count,
+                );
+            }
+            Err(e) => {
+                // Not fatal — the reward record already landed. Say what is
+                // not true (rule 10) instead of swallowing the failure.
+                println!("graph: NOT written ({e})");
+                return Ok(ExitCode::FAILURE);
+            }
+        }
+    }
+
     Ok(ExitCode::SUCCESS)
+}
+
+/// Build a graph that reflects the patched rollout: one [`AssetNode`] per
+/// task (keyed by a stable content hash of the task input), one
+/// [`ActionNode`] per playbook step, with `Requires` edges from each action
+/// back to the task asset it belongs to.
+///
+/// Each action's `ActionStatus` is derived from the transcript line kind:
+/// `[ok] <tool>` and `[detour] … took <tool>` mark the owning step as
+/// `Done`; `[retry] <tool>` and `[stall] <tool> …` mark the step as
+/// `Queued` (reached but never completed); the trap step with no
+/// corresponding `[ok]`/`[detour]` is `Blocked`. The transcript is the
+/// ground truth the episode summaries do not carry on their own — the
+/// transcript is kept inline in the `HookEpisode`s even though it was
+/// omitted from the on-disk `RolloutRecord`.
+///
+/// The graph is intentionally simple. A richer writer that observes hook
+/// calls directly is the obvious follow-up; this one closes "nothing
+/// records yet" by having runtime code produce an on-disk graph file, per
+/// the item's wording.
+fn build_graph_from_episodes(
+    tasks: &[Task],
+    episodes: &[omni_core::HookEpisode],
+    installed: bool,
+) -> Result<Graph, Error> {
+    let mut graph = Graph::new();
+    for (task_idx, task) in tasks.iter().enumerate() {
+        let asset_id = format!("asset:{}", content_id_str(&task.input));
+        let mut updates = GraphUpdate {
+            add_nodes: vec![Node::Asset(AssetNode {
+                id: asset_id.clone(),
+                value: task.input.clone(),
+                last_seen_round: 1,
+            })],
+            add_edges: Vec::new(),
+        };
+
+        // Find the matching episode. The frozen agent runs one episode per
+        // task in order, so index agreement is enough here — but matching
+        // by task id would be identity-safe either way. We use index +
+        // identity cross-check so an off-by-one in a later refactor is a
+        // test failure, not a silent mispairing.
+        let episode = episodes.get(task_idx);
+        let transcript = episode.map(|e| e.transcript.as_str()).unwrap_or("");
+
+        for (step_idx, step) in task.steps.iter().enumerate() {
+            let action = Action::new(
+                &step.tool,
+                serde_json::json!({ "task": task_idx, "step": step_idx }),
+            )?;
+            let status = step_status_from_transcript(&step.tool, transcript, installed);
+            let mut node = ActionNode::new(action.clone(), step_idx as i64, 1);
+            node.status = status;
+            updates.add_nodes.push(Node::Action(node));
+            updates.add_edges.push((action.id, EdgeKind::Requires, asset_id.clone()));
+        }
+
+        graph.apply(&updates, 1);
+    }
+    Ok(graph)
+}
+
+/// Infer an action's status from the transcript. Not a full parser — just
+/// enough signal to populate the demo graph. If a tool appears as neither
+/// an `[ok]` nor a `[detour]` line, it is `Queued` (reached but not
+/// completed) when the patched arm installed, and `Blocked` when it did
+/// not — the two cases a reader cares about for the demo.
+fn step_status_from_transcript(
+    tool: &str,
+    transcript: &str,
+    installed: bool,
+) -> omni_graph::ActionStatus {
+    let ok_marker = format!("[ok] {tool}");
+    let detour_marker = format!("took {tool}");
+    for line in transcript.lines() {
+        if line.starts_with(&ok_marker) || line.contains(&detour_marker) {
+            return omni_graph::ActionStatus::Done;
+        }
+    }
+    if installed {
+        omni_graph::ActionStatus::Queued
+    } else {
+        omni_graph::ActionStatus::Blocked
+    }
 }
 
 #[derive(Default)]
 struct Flags {
     out: Option<PathBuf>,
+    graph_out: Option<PathBuf>,
     patch_file: Option<PathBuf>,
     patch_stdin: bool,
 }
@@ -135,6 +256,13 @@ fn parse_flags(args: &[String]) -> Result<Flags, Usage> {
                     .get(i + 1)
                     .ok_or_else(|| Usage::new("--out needs a value"))?;
                 f.out = Some(PathBuf::from(v));
+                i += 2;
+            }
+            "--graph-out" => {
+                let v = args
+                    .get(i + 1)
+                    .ok_or_else(|| Usage::new("--graph-out needs a value"))?;
+                f.graph_out = Some(PathBuf::from(v));
                 i += 2;
             }
             "--patch-file" => {

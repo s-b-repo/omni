@@ -305,6 +305,7 @@ version = "0.1.0"
 dependencies = [
  "omni-core",
  "omni-eval",
+ "omni-graph",
  "omni-loop",
  "omni-model",
  "omni-model-peregrine",
