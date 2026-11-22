@@ -21,6 +21,13 @@ struct Flags {
     budget: Option<usize>,
     decode_policy: Option<PathBuf>,
     compare_decode_policy: Option<PathBuf>,
+    runtime: NativeRuntime,
+}
+
+#[derive(Default)]
+struct NativeRuntime {
+    backend: Option<String>,
+    device: Option<String>,
 }
 
 fn parse(args: &[String]) -> Result<Flags, Error> {
@@ -38,6 +45,11 @@ fn parse(args: &[String]) -> Result<Flags, Error> {
             "--compare-decode-policy" => flags.compare_decode_policy = Some(PathBuf::from(value)),
             "--dcr" => flags.dcr = Some(PathBuf::from(value)),
             "--context-store" => flags.store = Some(PathBuf::from(value)),
+            "--backend" if matches!(value.as_str(), "cpu" | "wgpu") => {
+                flags.runtime.backend = Some(value.clone());
+            }
+            "--backend" => return Err(Error::Format("Nina backend must be cpu or wgpu".into())),
+            "--device" => flags.runtime.device = Some(value.clone()),
             "--context-budget" => {
                 let budget = value
                     .parse::<usize>()
@@ -51,6 +63,9 @@ fn parse(args: &[String]) -> Result<Flags, Error> {
             }
             _ => return Err(Error::Format(format!("unknown Nina option {name:?}"))),
         }
+    }
+    if flags.runtime.device.is_some() && flags.runtime.backend.as_deref() != Some("wgpu") {
+        return Err(Error::Format("Nina --device requires --backend wgpu".into()));
     }
     if flags.dcr.is_some() != flags.store.is_some()
         || (flags.budget.is_some() && flags.store.is_none())
@@ -232,6 +247,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, Error> {
     let (prompt, ids) = prompt_with_evidence(bare, &hits, width)?;
     let answer = generate(
         &binary,
+        &flags.runtime,
         &tokenizer,
         &generator,
         &prompt,
@@ -247,7 +263,9 @@ pub fn run(args: &[String]) -> Result<ExitCode, Error> {
         },
     });
     if let Some(policy) = flags.compare_decode_policy {
-        let candidate = generate(&binary, &tokenizer, &generator, &prompt, Some(&policy))?;
+        let candidate = generate(
+            &binary, &flags.runtime, &tokenizer, &generator, &prompt, Some(&policy),
+        )?;
         let agrees = candidate["text"] == report["generation"]["text"];
         report["comparison"] = json!({"generation": candidate, "agrees_with_greedy": agrees});
     }
@@ -257,13 +275,20 @@ pub fn run(args: &[String]) -> Result<ExitCode, Error> {
 
 fn generate(
     binary: &Path,
+    runtime: &NativeRuntime,
     tokenizer: &Path,
     generator: &Path,
     prompt: &str,
     policy: Option<&Path>,
 ) -> Result<Value, Error> {
-    let mut native_args = vec![
-        OsStr::new("ncm"),
+    let mut native_args = vec![OsStr::new("ncm")];
+    if let Some(backend) = &runtime.backend {
+        native_args.extend([OsStr::new("--backend"), OsStr::new(backend)]);
+    }
+    if let Some(device) = &runtime.device {
+        native_args.extend([OsStr::new("--device"), OsStr::new(device)]);
+    }
+    native_args.extend([
         OsStr::new("generate"),
         OsStr::new("--tokenizer"),
         tokenizer.as_os_str(),
@@ -271,7 +296,7 @@ fn generate(
         generator.as_os_str(),
         OsStr::new("--prompt-stdin"),
         OsStr::new("--json"),
-    ];
+    ]);
     match policy {
         Some(policy) => native_args.extend([OsStr::new("--decode-policy"), policy.as_os_str()]),
         None => {

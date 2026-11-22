@@ -20,8 +20,8 @@ machine, and the contract would be the only thing that had to agree.
 | Seam | Owner | How omni reaches it |
 |---|---|---|
 | model inference | **peregrine** | HTTP, `POST /v1/chat/completions`, OpenAI dialect |
-| context / working set | **subnext** (`dcr`) | library link + the file channel below |
-| trained capability | **unifur** (`dblocks`) | process, feature-gated; no code checkpoint yet |
+| context / working set | **subnext** (`dcr`) | library link and `context-read` subprocess |
+| trained capability | **unifur** (`dblocks`) | native NCM subprocess for Nina |
 | agent loop, ROE, graph | **openhack** | ported as `omni-graph` / `omni-loop` / `omni-profile-pentest` |
 | harness editing | **Harness-R1** | the patch protocol and the rerun-delta reward, in `omni-hook` / `omni-eval` |
 
@@ -196,6 +196,8 @@ level and trunk evaluations. Subnext owns durable memory. Nina performs its
 trained latent vector updates and geometric scoring within each level.
 The request is read-only and the route returns text. The direct route uses
 native `.mpk` codec and generator files with their state sidecars.
+Use `--backend wgpu --device discrete:0` with a WGPU-capable Unifur build
+to run that same request on an accelerator.
 
 The Unifur worker records the generator's codec digest and keeps the
 checkpoint and optimizer sidecars with the run. Transfer the matching pair
@@ -217,13 +219,12 @@ The server owns the acceptance algorithm and draft metrics.
 
 ### DCR identity
 
-omni uses canonical `dcr` (subnext), not `peregrine-ctx`. The latter is a
-six-week-old port missing `interop`, `sessions`, `skills` and `fit`.
-
-Two DCR implementations in two processes is fine and intended — they coordinate
-over the version-1 file channel above. peregrine's `COLI_CTX=1` plane is
-per-request and stateless; omni's working set is per-session. They must not be
-pointed at the same store.
+Build the `dcr` binary from the Subnext checkout beside Omni. Run
+`scripts/verify-cross-repo.sh --strict` with Subnext, Unifur and Peregrine as
+sibling checkouts and their cited Git revisions available. The script runs the
+live Nina route on CPU and validates Unifur's emitted file-channel manifest.
+For an existing file-channel deployment, pass `--deployed-contract PATH`
+to check its manifest against the same parser.
 
 ## The harness-edit seam — Harness-R1
 

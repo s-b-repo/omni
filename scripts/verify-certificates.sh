@@ -20,7 +20,7 @@ PROFILE="release"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --debug) PROFILE="debug"; shift ;;
+        --debug) PROFILE="dev"; shift ;;
         -h|--help) sed -n '/^# Usage:/,/^# `--debug`/p' "$0" | sed 's/^# \?//; $d'; exit 0 ;;
         *) echo "unknown option $1" >&2; exit 2 ;;
     esac

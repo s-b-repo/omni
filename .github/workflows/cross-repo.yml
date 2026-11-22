@@ -1,0 +1,50 @@
+name: Cross-repository contracts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: omni
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: s-b-repo/subnext
+          ref: main
+          path: subnext
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: s-b-repo/unifur
+          ref: main
+          path: unifur
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: s-b-repo/peregrine
+          ref: main
+          path: peregrine
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the real context and model interfaces
+        working-directory: omni
+        run: |
+          scripts/verify-cross-repo.sh --self-test
+          scripts/verify-cross-repo.sh --strict

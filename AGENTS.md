@@ -66,16 +66,13 @@ scripts/verify-cross-repo.sh --self-test          # so does this one
 The last four have the same shape on purpose: one command each, non-zero on
 failure, reason on stderr.
 
-`verify-cross-repo.sh` is the only gate that looks outside this tree. It exists
-because the four repos are joined by versioned contracts and a vendored port,
-and neither of those rots quietly. It checks that the canonical subnext checkout
-is the one carrying the live responder, that `peregrine-ctx` still differs from
-`subnext/src` in exactly the two files the prefix rename allows, that `GATED`
-covers every message the deployed contract declares, that unifur's and subnext's
-message shapes agree field-for-field, and that every citation in
-`docs/NEGATIVE-RESULTS.md` still resolves. It has no `--accept-drift` flag, and
-that is deliberate: a finding you can switch off is a finding you will switch
-off.
+`verify-cross-repo.sh` uses the sibling Subnext, Unifur and Peregrine
+checkouts. It resolves the revision-pinned experiment citations, checks
+Unifur's emitted file-channel manifest against Omni's wire types, and
+trains a small CPU fixture to exercise the actual Subnext and Nina CLI route.
+It validates the bounded evidence, counts latent updates, and compares the
+Subnext store hashes after inference. Use `--deployed-contract PATH` to
+validate a deployment's manifest in the same run.
 
 `--all-targets` on clippy is not optional. Without it `cargo check` skips test
 targets, so a signature change can leave a `#[cfg(test)]` module uncompilable
@@ -152,8 +149,9 @@ what it gates: the `GATED` table in `omni-verify`'s contract group. If you add a
 message and do not add it to that table, the certificate is no longer describing
 the workspace.
 
-The context message shapes are already deployed at version 1 on both sides of
-`/srv/m-sda/unifur/interop/`. **Implement them; do not redefine them.**
+The file-channel message shapes are version 1. Compare a peer's emitted
+manifest with `omni-verify peer-contract PATH`. The Subnext
+`context-read` interface uses the same versioned `ContextHit`.
 
 ### 6. A claim that cannot be reduced to a residual is not a certificate.
 

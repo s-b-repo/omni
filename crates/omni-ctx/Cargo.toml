@@ -1,6 +1,6 @@
 [package]
 name = "omni-ctx"
-description = "The ContextPlane: a working set that outlives the attention window. Speaks the deployed unifur<->subnext file channel and hosts a local DCR."
+description = "A working set that outlives the attention window, with a local DCR and a versioned file-channel client."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,21 +10,7 @@ repository.workspace = true
 [dependencies]
 omni-core = { workspace = true }
 omni-model = { workspace = true }
-# Canonical subnext, not peregrine-ctx. Both are the same crate and both carry
-# `interop`, `sessions`, `skills` and `fit` as of 609451b; peregrine-ctx is a
-# vendored prefix-renamed copy whose sync is gated by
-# scripts/verify-cross-repo.sh, and this is the upstream of record.
-#
-# NOTE: this is a path dependency into a working tree with uncommitted changes
-# (`src/interop.rs` is untracked there). The build is therefore reproducible
-# from the tree, not from a commit. See docs/CONTRACT.md.
-#
-# Three levels up on this machine: the manifest is at `<omni>/crates/omni-ctx`
-# and omni sits beside subnext as `/home/kali/Music/cybersec ai/{omni,subnext}`,
-# so `../../..` is `/home/kali/Music/cybersec ai`. On the cortix workstation
-# the layout was `/home/cortix/Downloads/{omni,subnext}` and `../../../..`
-# landed in `/home/cortix/Downloads`; the two layouts share "subnext is the
-# parent of omni's parent", so the path adjusts to the depth of that parent.
+# Use the Subnext checkout beside the Omni repository.
 dcr = { path = "../../../subnext" }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -38,6 +38,15 @@ fn dispatch(args: &[String]) -> Result<ExitCode, Error> {
     };
     match cmd.as_str() {
         "verify" => cmd_verify(&args[1..]),
+        "peer-contract" => {
+            let [_, path] = args else {
+                return Err(Error::Format("peer-contract needs one manifest path".into()));
+            };
+            let manifest = std::fs::read_to_string(path)?;
+            omni_verify::contract::check_peer_manifest(&manifest)?;
+            println!("peer contract matches Omni's versioned file channel");
+            Ok(ExitCode::SUCCESS)
+        }
         "list" => {
             println!("certificate groups:");
             for g in omni_verify::GROUPS {
@@ -69,6 +78,7 @@ omni-verify — the numerical certificate suite
 
 USAGE
     omni-verify verify [--group <NAME>]   run the suite; non-zero on failure
+    omni-verify peer-contract PATH       validate a file-channel manifest
     omni-verify preflight                 run the cheapest load-bearing checks
     omni-verify list                      list the certificate groups
 "

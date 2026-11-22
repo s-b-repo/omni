@@ -36,6 +36,8 @@
 //! second, private refusal path left in this file, and
 //! `gated_rows_parse_into_the_types_they_name` is what keeps it that way.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use omni_core::Error;
 use omni_core::contract::{
     CHANNEL_ENVELOPE_VERSION, CONTEXT_HIT_VERSION, CONTEXT_PUT_VERSION, CONTEXT_QUERY_VERSION,
@@ -216,6 +218,55 @@ const GATED: &[Gated] = &[
         accept: accept_hook_packet,
     },
 ];
+
+/// Check the manifest emitted by a file-channel peer against Omni's wire fixtures.
+pub fn check_peer_manifest(json: &str) -> Result<(), Error> {
+    use omni_core::contract::{PROTOCOL, REQUEST_SUFFIX, RESPONSE_SUFFIX};
+
+    let document: Value = serde_json::from_str(json)?;
+    if document["version"].as_u64() != Some(1) || document["protocol"].as_str() != Some(PROTOCOL) {
+        return Err(Error::Format("peer manifest protocol or document version differs".into()));
+    }
+    let channel = &document["channel"];
+    if channel["request_suffix"].as_str() != Some(REQUEST_SUFFIX)
+        || channel["response_suffix"].as_str() != Some(RESPONSE_SUFFIX)
+    {
+        return Err(Error::Format("peer file-channel suffixes differ".into()));
+    }
+    let messages = document["messages"]
+        .as_array()
+        .ok_or_else(|| Error::Format("peer manifest needs a messages array".into()))?;
+    let mut by_name = BTreeMap::new();
+    for message in messages {
+        let name = message["name"]
+            .as_str()
+            .ok_or_else(|| Error::Format("peer message has no name".into()))?;
+        if by_name.insert(name, message).is_some() {
+            return Err(Error::Format(format!("peer message {name} appears twice")));
+        }
+    }
+    for row in GATED.iter().filter(|row| row.kind != "HookPacket") {
+        let message = by_name
+            .remove(row.kind)
+            .ok_or_else(|| Error::Format(format!("peer manifest is missing {}", row.kind)))?;
+        if message["version"].as_u64() != Some(u64::from(row.supported)) {
+            return Err(Error::Format(format!("peer message {} has a different version", row.kind)));
+        }
+        let sample: BTreeMap<String, Value> = serde_json::from_str(row.sample)?;
+        let expected: BTreeSet<&str> = sample.keys().map(String::as_str).filter(|&field| field != "version").collect();
+        let values = message["fields"]
+            .as_array()
+            .ok_or_else(|| Error::Format(format!("peer message {} needs a fields array", row.kind)))?;
+        let fields: BTreeSet<&str> = values.iter().filter_map(Value::as_str).collect();
+        if fields.len() != values.len() || fields != expected {
+            return Err(Error::Format(format!("peer message {} fields differ", row.kind)));
+        }
+    }
+    if !by_name.is_empty() {
+        return Err(Error::Format(format!("unrecognised peer messages: {:?}", by_name.keys())));
+    }
+    Ok(())
+}
 
 /// Run the `contract` group.
 #[must_use]

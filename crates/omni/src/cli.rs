@@ -82,6 +82,7 @@ SUBCOMMANDS
                                    Mirrors the peregrine entry: show argv,
                                    probe the preconditions, only call on --complete.
     model nina --binary P --generator P --tokenizer P
+        [--backend cpu|wgpu] [--device ADAPTER]
                [--decode-policy P | --compare-decode-policy P]
                [--dcr P --context-store P [--context-budget N]]
                                    Read a question on stdin and run native NCM.
@@ -166,17 +167,10 @@ fn cmd_contract() -> Result<ExitCode, Error> {
 
     let deployed = "deployed (unifur <-> subnext)";
     let omni_own = "omni's own (harness-edit evidence)";
-    let rows: [(&str, u32, &str); 5] = [
-        ("ContextQuery", contract::CONTEXT_QUERY_VERSION, deployed),
-        ("ContextHit", contract::CONTEXT_HIT_VERSION, deployed),
-        ("ChannelRequest", contract::CHANNEL_ENVELOPE_VERSION, deployed),
-        ("ChannelResponse", contract::CHANNEL_ENVELOPE_VERSION, deployed),
-        ("HookPacket", contract::HOOK_PACKET_VERSION, omni_own),
-    ];
-
     let (header_name, header_status) = ("message", "status");
     println!("{:<18} {:>8}  {}", header_name, "version", header_status);
-    for (name, version, status) in rows {
+    for &(name, version) in contract::VERSIONED_MESSAGES {
+        let status = if name == "HookPacket" { omni_own } else { deployed };
         println!("{name:<18} {version:>8}  {status}");
     }
 
