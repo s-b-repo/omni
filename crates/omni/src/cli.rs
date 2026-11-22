@@ -81,6 +81,11 @@ SUBCOMMANDS
                                    feature the subcommand reports the absence).
                                    Mirrors the peregrine entry: show argv,
                                    probe the preconditions, only call on --complete.
+    model nina --binary P --generator P --tokenizer P
+               [--decode-policy P | --compare-decode-policy P]
+               [--dcr P --context-store P [--context-budget N]]
+                                   Read a question on stdin and run native NCM.
+                                   Use Subnext for the optional working set.
     model dialects                 print where peregrine differs from OpenAI
     rollout --out <path> [--graph-out <path>] [--patch-file P | --patch-stdin]
                                    run the built-in demo baseline + a patch,

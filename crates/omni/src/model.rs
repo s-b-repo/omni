@@ -24,13 +24,14 @@ use crate::cli::Usage;
 pub fn dispatch(args: &[String]) -> Result<ExitCode, Usage> {
     let Some(sub) = args.first() else {
         return Err(Usage::new(
-            "model needs a subcommand: peregrine | unifur | dialects",
+            "model needs a subcommand: peregrine | unifur | nina | dialects",
         ));
     };
     let rest = &args[1..];
     match sub.as_str() {
         "peregrine" => peregrine(rest),
         "unifur" => unifur(rest),
+        "nina" => crate::nina::run(rest).map_err(|error| Usage::new(error.to_string())),
         "dialects" => dialects(),
         other => Err(Usage::new(format!("unknown `omni model` subcommand {other:?}"))),
     }

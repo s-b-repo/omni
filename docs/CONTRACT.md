@@ -180,6 +180,41 @@ performance-only, and performance-only knobs do not belong in an identity.
 path dependency on a workspace you do not build with would make the harness
 unbuildable anywhere peregrine is not present, to buy a type alias.
 
+## The native Nina route
+
+`omni model nina --binary P --tokenizer P --generator P` reads one UTF-8
+question from stdin. When given `--dcr P --context-store P`, it calls Subnext's
+`context-read` over stdin and validates each returned `ContextHit` at version 1.
+It passes the available evidence bytes in `DCR_EVIDENCE_BYTES` and packs whole
+JSON evidence strings within the generator's recorded `prompt_len`. The full
+question stays in the prompt. A missing or malformed store response is an
+error. An empty working set preserves the native pilot template.
+
+Omni sends the active prompt through stdin to `dblocks ncm generate --json`
+and returns the answer, supplied byte count, evidence IDs, and measured NCM
+level and trunk evaluations. Subnext owns durable memory. Nina performs its
+trained latent vector updates and geometric scoring within each level.
+The request is read-only and the route returns text. The direct route uses
+native `.mpk` codec and generator files with their state sidecars.
+
+The Unifur worker records the generator's codec digest and keeps the
+checkpoint and optimizer sidecars with the run. Transfer the matching pair
+from one run to Omni. Subnext's storage and retrieval budget is independent
+of the accelerator budget for training the model.
+[Worker dispatch and checkpoints](https://github.com/s-b-repo/unifur/blob/main/docs/Training-Guide.md#dispatch-a-worker)
+
+`--decode-policy P` passes a native JSON policy to the generator. Use
+`--compare-decode-policy P` to replay that policy and the greedy control
+against the same checkpoint and evidence. The response adds the candidate
+report and its text agreement with the control. The greedy answer remains
+the primary response of the comparison. The policy can budget level calls,
+drafts, particles and probes, and the runner includes the measured work.
+
+For a compatible target and separately trained DFlash draft, Omni can call
+the enabled inference server through its existing OpenAI-compatible client.
+The server owns the acceptance algorithm and draft metrics.
+[Reference pair](https://huggingface.co/z-lab/Qwen3.5-4B-DFlash)
+
 ### DCR identity
 
 omni uses canonical `dcr` (subnext), not `peregrine-ctx`. The latter is a

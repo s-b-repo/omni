@@ -177,6 +177,9 @@ impl GateChain {
 
 impl Gate for GateChain {
     fn evaluate(&self, tool: &str, args: &Value) -> Decision {
+        if self.gates.is_empty() {
+            return Decision::block(GateKind::Safety, "no tool policy is installed");
+        }
         for g in &self.gates {
             let d = g.evaluate(tool, args);
             if !d.allowed {
@@ -221,9 +224,9 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_chain_allows() {
+    fn an_empty_chain_denies() {
         let d = GateChain::new().evaluate("shell", &json!({}));
-        assert!(d.is_allowed());
+        assert!(!d.is_allowed());
     }
 
     #[test]

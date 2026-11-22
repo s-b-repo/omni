@@ -1,7 +1,11 @@
 //! Tools: the schema the model sees, the thing that runs, and the registry that
 //! joins them through a [`Gate`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -110,12 +114,84 @@ pub trait Tool: Send {
 pub struct ToolRegistry {
     tools: BTreeMap<String, Box<dyn Tool>>,
     gate: GateChain,
+    read_only: BTreeSet<String>,
+    control: Option<ActionControl>,
+}
+
+struct ActionControl {
+    audit: File,
+    stop_file: PathBuf,
+    remaining: usize,
+    approvals: BTreeMap<String, (ToolCall, Instant)>,
+    used: BTreeSet<String>,
+}
+
+impl ActionControl {
+    fn check_running(&self) -> Result<(), Error> {
+        match self.stop_file.symlink_metadata() {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Ok(_) => Err(Error::Format("operator stopped tool dispatch".into())),
+            Err(err) => Err(err).ctx(|| "checking the operator stop file".into()),
+        }
+    }
+
+    fn record(&mut self, event: &str, call: &ToolCall) -> Result<(), Error> {
+        let digest = omni_core::ids::content_id(&omni_core::canonical::canonical_bytes(&call.arguments)?);
+        let mut line = serde_json::to_vec(&serde_json::json!({
+            "event": event, "call": call.id, "tool": call.name, "arguments_digest": digest,
+        })).ctx(|| "encoding a tool audit record".into())?;
+        line.push(b'\n');
+        self.audit.write_all(&line).ctx(|| "writing the tool audit record".into())?;
+        self.audit.sync_data().ctx(|| "syncing the tool audit record".into())
+    }
 }
 
 impl ToolRegistry {
     #[must_use]
     pub fn new() -> Self {
-        Self { tools: BTreeMap::new(), gate: GateChain::new() }
+        Self::default()
+    }
+
+    /// Install the operator-owned audit file, stop marker and run budget.
+    /// The launcher gives the model process no write access to these files.
+    pub fn controlled(audit: File, stop_file: PathBuf, max_calls: usize) -> Result<Self, Error> {
+        if !stop_file.is_absolute() || max_calls == 0 {
+            return Err(Error::Format("tool control needs an absolute stop path and a positive call budget".into()));
+        }
+        Ok(Self {
+            control: Some(ActionControl {
+                audit, stop_file, remaining: max_calls,
+                approvals: BTreeMap::new(), used: BTreeSet::new(),
+            }),
+            ..Self::default()
+        })
+    }
+
+    /// Register a reviewed read-only implementation. It still needs a policy.
+    pub fn register_read_only(&mut self, tool: Box<dyn Tool>) -> Result<(), Error> {
+        let name = tool.spec().name.clone();
+        self.register(tool)?;
+        self.read_only.insert(name);
+        Ok(())
+    }
+
+    /// Approve one exact call from trusted host code. Tool arguments and tool
+    /// results cannot create an approval. The registry instance is the run.
+    pub fn approve_once(&mut self, call: &ToolCall, ttl: Duration) -> Result<(), Error> {
+        let policy = self.evaluate_policy(&call.name, &call.arguments);
+        if !policy.allowed || call.id.is_empty() || ttl.is_zero() || ttl > Duration::from_secs(300) {
+            return Err(Error::Format("approval requires an in-policy call, an ID and a lifetime up to five minutes".into()));
+        }
+        let control = self.control.as_mut().ok_or_else(|| Error::Format("no operator control is installed".into()))?;
+        control.check_running()?;
+        let now = Instant::now();
+        control.approvals.retain(|_, (_, expires)| *expires > now);
+        if control.approvals.len() >= control.remaining || control.used.contains(&call.id) || control.approvals.contains_key(&call.id) {
+            return Err(Error::Format("approval ID was used or the run budget is full".into()));
+        }
+        control.record("approved", call)?;
+        control.approvals.insert(call.id.clone(), (call.clone(), now + ttl));
+        Ok(())
     }
 
     /// Register a tool.
@@ -175,18 +251,38 @@ impl ToolRegistry {
     /// [`ToolRegistry::call`] will.
     #[must_use]
     pub fn evaluate(&self, call: &ToolCall) -> Decision {
-        self.evaluate_parts(&call.name, &call.arguments)
+        let policy = self.evaluate_policy(&call.name, &call.arguments);
+        if !policy.allowed || self.read_only.contains(&call.name) {
+            return policy;
+        }
+        if self.control.as_ref().is_some_and(|control| {
+            control.approvals.get(&call.id).is_some_and(|(approved, expiry)| approved == call && *expiry > Instant::now())
+        }) {
+            return policy;
+        }
+        Decision::block(GateKind::Safety, "one-time approval required for the exact call")
     }
 
     /// [`ToolRegistry::evaluate`] from raw parts, for callers that have not
     /// built a [`ToolCall`] yet.
     #[must_use]
     pub fn evaluate_parts(&self, tool: &str, args: &Value) -> Decision {
+        let policy = self.evaluate_policy(tool, args);
+        if policy.allowed && !self.read_only.contains(tool) {
+            return Decision::block(GateKind::Safety, "a consequential action requires an approved call ID");
+        }
+        policy
+    }
+
+    fn evaluate_policy(&self, tool: &str, args: &Value) -> Decision {
         // Registration is checked before policy, so "you do not have a tool
         // called X" is never reported as "the ROE refused X" — those call for
         // different fixes.
         if !self.tools.contains_key(tool) {
             return Decision::block(GateKind::Unknown, format!("no tool named {tool:?} is registered"));
+        }
+        if !args.is_object() {
+            return Decision::block(GateKind::Safety, "tool arguments must be an object");
         }
         self.gate.evaluate(tool, args)
     }
@@ -208,18 +304,39 @@ impl ToolRegistry {
                 decision.reason
             )));
         }
+        if let Some(control) = self.control.as_mut() {
+            control.check_running()?;
+            if control.remaining == 0 {
+                return Err(Error::Format("tool call budget exhausted".into()));
+            }
+            if !self.read_only.contains(&call.name) {
+                let exact = control.approvals.remove(&call.id).is_some_and(|(approved, expiry)| approved == *call && expiry > Instant::now());
+                if !exact {
+                    return Err(Error::Format("the exact approval expired or was consumed".into()));
+                }
+                control.used.insert(call.id.clone());
+            }
+            control.record("dispatch.intent", call)?;
+            control.check_running()?;
+            control.remaining -= 1;
+        }
         let tool = self
             .tools
             .get_mut(&call.name)
             .ok_or_else(|| Error::Format(format!("no tool named {:?} is registered", call.name)))?;
-        tool.call(&call.arguments).ctx(|| format!("running tool {}", call.name))
+        let result = tool.call(&call.arguments).ctx(|| format!("running tool {}", call.name));
+        if let Some(control) = &mut self.control {
+            let event = if result.is_ok() { "dispatch.done" } else { "dispatch.failed" };
+            control.record(event, call)?;
+        }
+        result
     }
 
     /// A stable description of the installed policy order, for the audit trail.
     #[must_use]
     pub fn policy_description(&self) -> String {
         if self.gate.is_empty() {
-            "no gate installed — every registered tool is callable".to_string()
+            "no gate installed — tool dispatch denied".to_string()
         } else {
             self.gate.describe()
         }
@@ -342,7 +459,8 @@ mod tests {
     #[test]
     fn an_allowed_tool_runs_and_returns_its_output() -> Result<(), Error> {
         let mut r = ToolRegistry::new();
-        r.register(Box::new(Echo::new()?))?;
+        r.register_read_only(Box::new(Echo::new()?))?;
+        r.set_gate(Box::new(crate::gate::AllowAll));
         let call = ToolCall::new("c", "echo", json!({"text":"hi"}))?;
         assert_eq!(r.call(&call)?.content, "hi");
         assert_eq!(r.len(), 1);
@@ -355,6 +473,30 @@ mod tests {
         let r = ToolRegistry::new();
         assert!(r.policy_description().contains("no gate installed"));
         assert!(r.is_empty());
+    }
+
+    #[test]
+    fn consequential_dispatch_needs_the_exact_fresh_approval() -> Result<(), Error> {
+        let dir = std::env::temp_dir().join(format!("omni-tool-approval-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let audit = dir.join("audit.jsonl");
+        let stop = dir.join("stop");
+        let mut registry = ToolRegistry::controlled(File::create(&audit)?, stop.clone(), 2)?;
+        registry.register(Box::new(Echo::new()?))?;
+        registry.set_gate(Box::new(crate::gate::AllowAll));
+        let approved = ToolCall::new("call-1", "echo", json!({"text":"approved"}))?;
+        let changed = ToolCall::new("call-1", "echo", json!({"text":"another value"}))?;
+        assert!(registry.call(&approved).is_err());
+        registry.approve_once(&approved, Duration::from_secs(60))?;
+        assert!(registry.call(&changed).is_err());
+        assert_eq!(registry.call(&approved)?.content, "approved");
+        assert!(registry.call(&approved).is_err());
+        std::fs::write(&stop, b"")?;
+        let second = ToolCall::new("call-2", "echo", json!({"text":"another call"}))?;
+        assert!(registry.approve_once(&second, Duration::from_secs(60)).is_err());
+        assert_eq!(std::fs::read_to_string(audit)?.matches("dispatch.intent").count(), 1);
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
     }
 
     #[test]
