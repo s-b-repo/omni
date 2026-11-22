@@ -6,6 +6,7 @@
 //! `Result`; unknown input is an error that names the thing it did not
 //! recognise, never a default that silently does something else.
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::model;
@@ -41,6 +42,7 @@ pub fn dispatch(args: &[String]) -> Result<ExitCode, Error> {
         "verify" => cmd_verify(&args[1..]),
         "list" => cmd_list(),
         "contract" => cmd_contract(),
+        "context-respond" => cmd_context_respond(&args[1..]),
         "model" => model::dispatch(&args[1..]).map_err(|u| Error::Format(u.0)),
         "rollout" => crate::rollout::dispatch(&args[1..]).map_err(|u| Error::Format(u.0)),
         "help" | "--help" | "-h" => {
@@ -69,6 +71,8 @@ SUBCOMMANDS
     verify [--group <NAME>]        run the certificate suite; non-zero on failure
     list                           list the certificate groups
     contract                       print the cross-process contracts this build speaks
+    context-respond CHANNEL DCR STORE [BUDGET]
+                                   answer pending file-channel queries using Subnext
     model peregrine [--url U] [--key K] [--complete] [--stream]
                                    show the exact request this build would send,
                                    then try /health on the server. --complete
@@ -106,6 +110,36 @@ GATES
     scripts/audit-bad-patterns.sh --strict
     scripts/verify-certificates.sh"
     );
+}
+
+fn cmd_context_respond(args: &[String]) -> Result<ExitCode, Error> {
+    use omni_ctx::channel::{Channel, ChannelOptions};
+
+    let (directory, dcr, store, budget) = match args {
+        [directory, dcr, store] => (directory, dcr, store, 120),
+        [directory, dcr, store, budget] => {
+            let budget = budget
+                .parse::<usize>()
+                .ok()
+                .filter(|budget| (1..=4096).contains(budget))
+                .ok_or_else(|| Error::Format("BUDGET must be between 1 and 4096".into()))?;
+            (directory, dcr, store, budget)
+        }
+        _ => {
+            return Err(Error::Format(
+                "usage: context-respond CHANNEL DCR STORE [BUDGET]".into(),
+            ));
+        }
+    };
+    let channel = Channel::new(ChannelOptions {
+        dir: PathBuf::from(directory),
+        ..ChannelOptions::default()
+    });
+    let count = channel.respond_once(|query| {
+        crate::nina::context(Path::new(dcr), Path::new(store), &query.text, budget, None)
+    })?;
+    println!("Published {count} context responses");
+    Ok(ExitCode::SUCCESS)
 }
 
 fn cmd_verify(args: &[String]) -> Result<ExitCode, Error> {

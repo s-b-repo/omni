@@ -228,6 +228,27 @@ def snapshot(store):
     }
 
 
+def check_responder(harness, dcr, store, directory):
+    directory.mkdir()
+    request = directory / "atlas.request.json"
+    response = directory / "atlas.response.json"
+    envelope = {
+        "version": 1, "id": "atlas",
+        "query": {"version": 1, "field": "general", "text": QUESTION, "k": 1},
+    }
+    request.write_text(json.dumps(envelope), encoding="utf-8")
+    command = (harness, "context-respond", directory, dcr, store, "96")
+    require("Published 1" in run(*command), "Omni did not answer the channel request")
+    reply = json.loads(response.read_text(encoding="utf-8"))
+    require(reply["version"] == 1 and reply["id"] == "atlas", "invalid response envelope")
+    check_hits(reply["hits"])
+    require(len(reply["hits"]) == 1, "response exceeded the requested hit count")
+    require("blue atlas" in reply["hits"][0]["text"].lower(), "response omitted the matching source")
+    published = response.stat().st_ino
+    require("Published 0" in run(*command), "Omni attempted to republish a completed response")
+    require(response.stat().st_ino == published, "a completed response was replaced")
+
+
 def live(omni, repos, deployed_contract):
     with TemporaryDirectory(prefix="omni-cross-repo-") as temporary:
         root = Path(temporary)
@@ -260,6 +281,7 @@ def live(omni, repos, deployed_contract):
         run(dcr, "ingest", "--store", store, source)
         before = snapshot(store)
         require(before, "Subnext wrote no fixture store")
+        check_responder(harness, dcr, store, root / "context-channel")
         query = f"Question:\n{QUESTION}\nAnswer:\n"
         hits = json.loads(
             run(

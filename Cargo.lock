@@ -304,6 +304,7 @@ name = "omni"
 version = "0.1.0"
 dependencies = [
  "omni-core",
+ "omni-ctx",
  "omni-eval",
  "omni-graph",
  "omni-loop",

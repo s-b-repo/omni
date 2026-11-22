@@ -148,16 +148,22 @@ fn call(
     Ok(output.stdout)
 }
 
-fn context(
+pub(crate) fn context(
     dcr: &Path,
     store: &Path,
     question: &str,
     budget: usize,
-    evidence_bytes: usize,
+    evidence_bytes: Option<usize>,
 ) -> Result<Vec<ContextHit>, Error> {
     let budget = budget.to_string();
+    let mut command = Command::new(dcr);
+    if let Some(bytes) = evidence_bytes {
+        command.env("DCR_EVIDENCE_BYTES", bytes.to_string());
+    } else {
+        command.env_remove("DCR_EVIDENCE_BYTES");
+    }
     let output = call(
-        Command::new(dcr).env("DCR_EVIDENCE_BYTES", evidence_bytes.to_string()),
+        &mut command,
         &[
             "context-read".as_ref(),
             "--store".as_ref(),
@@ -240,7 +246,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, Error> {
             &store,
             &question,
             flags.budget.unwrap_or(120),
-            evidence_bytes,
+            Some(evidence_bytes),
         )?,
         _ => Vec::new(),
     };

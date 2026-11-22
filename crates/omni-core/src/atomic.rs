@@ -16,16 +16,15 @@
 //!
 //! # The temporary name
 //!
-//! `<name>.tmp-<pid>`. The pid is there so two processes writing the same
-//! destination cannot collide on the temporary. It is not a security boundary
-//! and is not treated as one: a hostile process on the same host can already
-//! write into this directory.
+//! The temporary name includes the process ID and a per-process counter so
+//! concurrent writers can stage their own files.
 
-use std::io::Write as _;
+use std::fs::{self, File};
+use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::error::{Error, note_advisory};
+use crate::error::{note_advisory, Context, Error};
 
 /// Monotonic suffix so two writes in the same process do not reuse a temporary.
 static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -33,7 +32,9 @@ static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
 fn temp_path(dest: &Path) -> PathBuf {
     let seq = WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
-    let mut name = dest.file_name().map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    let mut name = dest
+        .file_name()
+        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
     name.push_str(&format!(".tmp-{pid}-{seq}"));
     dest.with_file_name(name)
 }
@@ -49,7 +50,20 @@ fn temp_path(dest: &Path) -> PathBuf {
 /// polls, and a stale `.tmp-*` is indistinguishable from a live write to
 /// anything inspecting the directory.
 pub fn write_atomic(dest: &Path, contents: &str) -> Result<(), Error> {
-    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = stage(dest, contents)?;
+    if let Err(e) = fs::rename(&tmp, dest) {
+        cleanup(&tmp, "after a failed rename");
+        return Err(Error::from(e)
+            .annotated(|| format!("renaming {} onto {}", tmp.display(), dest.display())));
+    }
+    Ok(())
+}
+
+fn stage(dest: &Path, contents: &str) -> Result<PathBuf, Error> {
+    let parent = dest
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     if !parent.is_dir() {
         return Err(Error::Format(format!(
             "cannot write {}: parent directory {} does not exist",
@@ -59,28 +73,18 @@ pub fn write_atomic(dest: &Path, contents: &str) -> Result<(), Error> {
     }
 
     let tmp = temp_path(dest);
-    let write_result = (|| -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(contents.as_bytes())?;
-        // Flush before the rename. Without it the rename can land while the
-        // bytes are still in the page cache, and a reader on another host sees
-        // the rename with no content — the exact failure atomicity exists to
-        // prevent. fsync is the honest boundary; it is also the slow one, which
-        // is why this is not the default for the reward cache.
-        f.sync_all()?;
-        Ok(())
-    })();
+    let mut file = File::create_new(&tmp).ctx(|| format!("creating {}", tmp.display()))?;
+    let write_result = file
+        .write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all());
+    drop(file);
 
     if let Err(e) = write_result {
         cleanup(&tmp, "after a failed write");
         return Err(Error::from(e).annotated(|| format!("writing {}", tmp.display())));
     }
 
-    if let Err(e) = std::fs::rename(&tmp, dest) {
-        cleanup(&tmp, "after a failed rename");
-        return Err(Error::from(e).annotated(|| format!("renaming {} onto {}", tmp.display(), dest.display())));
-    }
-    Ok(())
+    Ok(tmp)
 }
 
 /// Remove a temporary, recording rather than discarding a failure.
@@ -89,8 +93,11 @@ pub fn write_atomic(dest: &Path, contents: &str) -> Result<(), Error> {
 /// indistinguishable from a live write, so a cleanup that silently failed
 /// leaves the exact ambiguity the atomic rename exists to prevent.
 fn cleanup(tmp: &Path, when: &str) {
-    if let Err(e) = std::fs::remove_file(tmp) {
-        note_advisory(&format!("removing {when}: {}", tmp.display()), &Error::from(e));
+    if let Err(e) = fs::remove_file(tmp) {
+        note_advisory(
+            &format!("removing {when}: {}", tmp.display()),
+            &Error::from(e),
+        );
     }
 }
 
@@ -101,17 +108,25 @@ fn cleanup(tmp: &Path, when: &str) {
 /// may answer a request whose response is already on disk, and must not
 /// rewrite it.
 pub fn write_atomic_if_absent(dest: &Path, contents: &str) -> Result<bool, Error> {
-    if dest.exists() {
+    if dest.try_exists()? {
         return Ok(false);
     }
-    write_atomic(dest, contents)?;
-    Ok(true)
+    let tmp = stage(dest, contents)?;
+    // The link publishes the complete file and fails if another writer won.
+    let published = match fs::hard_link(&tmp, dest) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => {
+            Err(Error::from(error).annotated(|| format!("publishing {}", dest.display())))
+        }
+    };
+    cleanup(&tmp, "after attempting publication");
+    published
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::Context;
 
     /// A directory under the target dir, named after the test so parallel test
     /// threads cannot collide.
@@ -122,7 +137,10 @@ mod tests {
         match std::fs::remove_dir_all(&dir) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => note_advisory(&format!("clearing scratch {}", dir.display()), &Error::from(e)),
+            Err(e) => note_advisory(
+                &format!("clearing scratch {}", dir.display()),
+                &Error::from(e),
+            ),
         }
         std::fs::create_dir_all(&dir).ctx(|| format!("creating scratch {}", dir.display()))?;
         Ok(dir)
@@ -173,17 +191,54 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_if_absent_writers_publish_exactly_one_file() -> Result<(), Error> {
+        let dir = scratch("if-absent-concurrent")?;
+        let dest = dir.join("response.json");
+        let start = std::sync::Barrier::new(8);
+        let winners = std::thread::scope(|scope| -> Result<Vec<String>, Error> {
+            let writers: Vec<_> = (0..8)
+                .map(|index| {
+                    let (start, dest) = (&start, &dest);
+                    scope.spawn(move || {
+                        let contents = format!("response {index}");
+                        start.wait();
+                        write_atomic_if_absent(dest, &contents)
+                            .map(|wrote| wrote.then_some(contents))
+                    })
+                })
+                .collect();
+            let mut winners = Vec::new();
+            for writer in writers {
+                let Ok(result) = writer.join() else {
+                    return Err(Error::Format("response writer did not complete".into()));
+                };
+                if let Some(contents) = result? {
+                    winners.push(contents);
+                }
+            }
+            Ok(winners)
+        })?;
+        assert_eq!(winners, [fs::read_to_string(&dest)?]);
+        assert_eq!(fs::read_dir(dir)?.count(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn a_missing_parent_is_an_error_not_a_panic() -> Result<(), Error> {
         let dest = Path::new("/nonexistent-omni-parent-dir-xyz/a.json");
         let Err(err) = write_atomic(dest, "x") else {
-            return Err(Error::Format("writing into a missing parent must fail".into()));
+            return Err(Error::Format(
+                "writing into a missing parent must fail".into(),
+            ));
         };
         match err {
             Error::Format(msg) => {
                 assert!(msg.contains("parent"), "unhelpful message: {msg}");
                 Ok(())
             }
-            other => Err(Error::Format(format!("expected a Format error naming the parent, got {other}"))),
+            other => Err(Error::Format(format!(
+                "expected a Format error naming the parent, got {other}"
+            ))),
         }
     }
 }

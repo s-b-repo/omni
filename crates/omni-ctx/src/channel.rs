@@ -27,6 +27,7 @@
 //! it from a genuine miss. subnext's responder states the same rule from its
 //! side; this is the other half.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -46,6 +47,21 @@ pub struct ChannelRequest {
     pub version: u32,
     pub id: String,
     pub query: ContextQuery,
+}
+
+impl ChannelRequest {
+    /// Validate both versions and bind the request to its filename.
+    pub fn validate_for(&self, request_id: &str) -> Result<(), Error> {
+        omni_core::check_version("ChannelRequest", self.version, CHANNEL_ENVELOPE_VERSION)?;
+        self.query.validate()?;
+        validate_id(request_id)?;
+        if self.id != request_id {
+            return Err(Error::Format(format!(
+                "request id {:?} does not match filename id {request_id:?}", self.id
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// `ChannelResponse` — the envelope omni reads.
@@ -170,6 +186,75 @@ impl Channel {
     pub fn request_path(&self, id: &str) -> Result<PathBuf, Error> {
         validate_id(id)?;
         Ok(self.opts.dir.join(format!("{id}{REQUEST_SUFFIX}")))
+    }
+
+    /// Answer the pending version-1 requests using a local retriever.
+    /// Report failed requests and leave their response files absent.
+    pub fn respond_once(
+        &self,
+        retrieve: impl Fn(&ContextQuery) -> Result<Vec<ContextHit>, Error>,
+    ) -> Result<usize, Error> {
+        let entries = std::fs::read_dir(&self.opts.dir)
+            .ctx(|| format!("reading channel directory {}", self.opts.dir.display()))?;
+        let mut published = 0;
+        let mut failures = 0;
+        for entry in entries {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(id) = name.to_str().and_then(|name| name.strip_suffix(REQUEST_SUFFIX)) else {
+                continue;
+            };
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            match self.answer_request(id, &retrieve) {
+                Ok(written) => published += usize::from(written),
+                Err(error) => {
+                    failures += 1;
+                    omni_core::note_advisory(&format!("answering context request {id:?}"), &error);
+                }
+            }
+        }
+        if failures > 0 {
+            return Err(Error::Format(format!(
+                "{published} context responses published and {failures} requests failed"
+            )));
+        }
+        Ok(published)
+    }
+
+    fn answer_request(
+        &self,
+        id: &str,
+        retrieve: &impl Fn(&ContextQuery) -> Result<Vec<ContextHit>, Error>,
+    ) -> Result<bool, Error> {
+        if self.read_response(id)?.is_some() {
+            return Ok(false);
+        }
+        // A 16 KiB query can expand about sixfold when encoded as JSON.
+        const MAX_REQUEST_BYTES: usize = 128 * 1024;
+        let path = self.request_path(id)?;
+        let mut bytes = Vec::new();
+        std::fs::File::open(&path)?
+            .take(MAX_REQUEST_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .ctx(|| format!("reading request {}", path.display()))?;
+        if bytes.len() > MAX_REQUEST_BYTES {
+            return Err(Error::Format("context request exceeds the JSON byte limit".into()));
+        }
+        let mut request: ChannelRequest = serde_json::from_slice(&bytes)?;
+        request.validate_for(id)?;
+        request.query.k = request.query.k.min(self.opts.max_hits);
+        let mut hits = if request.query.k == 0 {
+            Vec::new()
+        } else {
+            retrieve(&request.query)?
+        };
+        hits.truncate(request.query.k);
+        for hit in &hits {
+            hit.validate()?;
+        }
+        write_response_if_absent(&self.opts.dir, id, &hits)
     }
 
     /// The path an answer for `id` would occupy.

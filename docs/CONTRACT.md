@@ -226,6 +226,12 @@ live Nina route on CPU and validates Unifur's emitted file-channel manifest.
 For an existing file-channel deployment, pass `--deployed-contract PATH`
 to check its manifest against the same parser.
 
+Use `omni context-respond CHANNEL DCR STORE [BUDGET]` to answer pending
+file-channel requests from a scoped Subnext store. The command validates the
+request versions and filenames, caps each response at the requested hit
+count, and publishes each response once. Repeated invocations can pick up
+new requests without rewriting existing responses.
+
 ## The harness-edit seam — Harness-R1
 
 omni adopts the idea and the discipline, not the benchmark bindings.
